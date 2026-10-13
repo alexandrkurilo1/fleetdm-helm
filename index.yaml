@@ -1,0 +1,26 @@
+apiVersion: v1
+entries:
+  fleet:
+  - apiVersion: v2
+    appVersion: v4.93.0
+    created: "2026-10-13T11:15:01.459009034Z"
+    description: FleetDM device-management server bundled with MySQL and Redis for
+      local Kubernetes clusters
+    digest: bc990f55f2aa81bc8354cc3081daa9997108dde31f797f0d340cd8d73caa494c
+    home: https://fleetdm.com
+    keywords:
+    - fleetdm
+    - osquery
+    - mdm
+    kubeVersion: '>=1.27.0-0'
+    maintainers:
+    - email: alexandr.kurilo71@gmail.com
+      name: Oleksandr Kurylo
+    name: fleet
+    sources:
+    - https://github.com/fleetdm/fleet
+    type: application
+    urls:
+    - https://github.com/alexandrkurilo1/fleetdm-helm/releases/download/fleet-0.1.1/fleet-0.1.1.tgz
+    version: 0.1.1
+generated: "2026-10-13T11:15:01.459015061Z"
