@@ -6,6 +6,7 @@ on:
   push:
     branches: [main]
     paths: ["charts/**", "ct.yaml", ".github/workflows/lint-test.yaml"]
+  workflow_dispatch:
 
 jobs:
   lint-test:
