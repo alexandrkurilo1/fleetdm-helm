@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Company Inc. — Cloud Architecture Design</title>
+<style>
+  @page { size: A4; margin: 13mm 14mm 12mm; }
+  * { box-sizing: border-box; }
+  body { font: 9.1pt/1.38 "Helvetica Neue", Helvetica, Arial, sans-serif; color: #1b2333; margin: 0; }
+  h1 { font-size: 16pt; margin: 0 0 1mm; letter-spacing: -.2px; }
+  .sub { color: #5a6b86; margin: 0 0 3mm; font-size: 9pt; }
+  h2 { font-size: 10.5pt; margin: 3.2mm 0 1.2mm; padding-bottom: .6mm; border-bottom: 1.2px solid #d5dbe5; color: #0e3a66; }
+  h3 { font-size: 9.3pt; margin: 2mm 0 .6mm; }
+  p { margin: 0 0 1.4mm; }
+  ul { margin: 0 0 1.4mm; padding-left: 4.2mm; }
+  li { margin: 0 0 .5mm; }
+  b { font-weight: 650; }
+  table { border-collapse: collapse; width: 100%; margin: .8mm 0 1.6mm; font-size: 8.6pt; }
+  th, td { border: 1px solid #d5dbe5; padding: .9mm 1.6mm; text-align: left; vertical-align: top; }
+  th { background: #f1f4f8; font-weight: 650; }
+  .summary { background: #f4f7fb; border-left: 3px solid #147eba; padding: 2mm 3mm; margin-bottom: 2mm; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6mm; }
+  .page-break { break-before: page; }
+  .hld h2 { margin-top: 0; }
+  .hld img { width: 100%; border: 1px solid #d5dbe5; }
+  .legend { font-size: 8.3pt; color: #5a6b86; margin-top: 2mm; }
+</style>
+</head>
+<body>
+
+<h1>Company Inc. — Cloud Architecture Design</h1>
+<p class="sub">Web application (React SPA + Python/Flask REST API + MongoDB) on AWS with Amazon EKS · v1.0</p>
+
+<div class="summary">
+<b>Summary.</b> The platform runs on <b>AWS</b>. It uses a multi-account AWS Organization, one VPC per environment spread over
+three AZs with no public compute, and <b>Amazon EKS</b> with Karpenter for the API. The React SPA is served from S3
+behind CloudFront and WAF. The database is <b>MongoDB Atlas</b> on AWS, reached over PrivateLink. All infrastructure is
+defined in Terraform and deployed through GitHub Actions and Argo CD (GitOps). Day one costs stay small: a few nodes and
+one M10 database cluster. Every layer scales horizontally to millions of users without a redesign.
+</div>
+
+<h2>1. Cloud environment structure</h2>
+<p><b>Provider: AWS.</b> It has the deepest managed-service catalogue and the largest hiring pool. Mature multi-account
+governance (Organizations, Control Tower, SCPs) works out of the box. EKS, Karpenter and the AWS Load Balancer
+Controller are the most widely documented Kubernetes stack, which matters for a team with little cloud experience.
+MongoDB Atlas runs natively on AWS and can be bought through AWS Marketplace, so billing stays in one place. GCP with
+GKE Autopilot is a credible alternative with less to operate, but the AWS ecosystem and talent pool tipped the
+decision.</p>
+<table>
+  <tr><th style="width:21%">Account (OU)</th><th>Purpose</th></tr>
+  <tr><td>Management</td><td>Organizations, consolidated billing, budgets, IAM Identity Center (SSO). No workloads.</td></tr>
+  <tr><td>Log Archive (Security)</td><td>Immutable org-wide CloudTrail, AWS Config and VPC Flow Logs (S3 Object Lock).</td></tr>
+  <tr><td>Security / Audit (Security)</td><td>Delegated admin for GuardDuty, Security Hub, IAM Access Analyzer; break-glass, read-only audit roles.</td></tr>
+  <tr><td>Shared Services (Infra)</td><td>ECR (single source of images), Route 53 public zones, CI/CD OIDC roles, Terraform state.</td></tr>
+  <tr><td>Dev · Staging · Prod (Workloads)</td><td>One account per environment, each with its own VPC, EKS cluster and Atlas project. Staging mirrors prod at a smaller size.</td></tr>
+</table>
+<p>Separate accounts give a hard blast-radius and IAM boundary, which matters because user data is sensitive. They also give
+per-environment cost visibility without tagging discipline. SCPs enforce guardrails: approved regions only, no disabling of
+CloudTrail or GuardDuty, no public S3, no IAM users. Engineers sign in through SSO with time-bound roles: full access in
+dev, read-only plus break-glass in prod.</p>
+
+<h2>2. Network design</h2>
+<div class="cols">
+<div>
+<ul>
+  <li><b>One VPC per environment</b> with non-overlapping CIDRs (e.g. prod <code>10.0.0.0/16</code>), across <b>3 AZs</b>,
+    with three subnet tiers per AZ:
+    <ul>
+      <li><b>Public:</b> ALB and NAT Gateways only.</li>
+      <li><b>Private app:</b> EKS nodes and pods, no public IPs. Large /19s for the VPC CNI with prefix delegation.</li>
+      <li><b>Private data:</b> PrivateLink endpoint to Atlas and interface endpoints.</li>
+    </ul></li>
+  <li><b>Ingress path:</b> Route 53 → CloudFront (TLS 1.2+, ACM) with <b>AWS WAF</b> (managed rule sets, rate limiting, bot control) and Shield Standard.
+    <code>/*</code> goes to the S3 bucket (Origin Access Control, bucket not public). <code>/api/*</code> goes to the ALB, which accepts traffic only from the CloudFront managed prefix list.</li>
+  <li><b>Egress:</b> NAT Gateway per AZ in prod (one in dev to save cost). VPC endpoints for ECR, S3, STS, Secrets Manager and KMS keep image pulls and AWS API calls off the internet.</li>
+</ul>
+</div>
+<div>
+<ul>
+  <li><b>Security groups:</b> ALB SG → node/pod SG only on the app port. Security Groups for Pods restrict which
+    workloads may reach the Atlas PrivateLink endpoint. Nothing allows inbound traffic from <code>0.0.0.0/0</code> except the ALB on 443.</li>
+  <li><b>NACLs</b> stay close to default (stateless, coarse). Fine-grained control lives in SGs and in Kubernetes
+    <b>NetworkPolicies</b> (default-deny per namespace, explicit allows).</li>
+  <li><b>EKS API endpoint</b> is private. Administrators reach it via SSO and SSM, or optionally through a public endpoint limited to CI/VPN CIDRs.</li>
+  <li><b>Detection:</b> VPC Flow Logs → Log Archive. GuardDuty (incl. EKS runtime and S3 protection) → Security Hub → alerts.</li>
+  <li>When more VPCs appear, add a Transit Gateway in Shared Services. Until then it isn't needed.</li>
+</ul>
+</div>
+</div>
+
+<h2>3. Compute platform — Amazon EKS</h2>
+<div class="cols">
+<div>
+<h3>Cluster & node groups</h3>
+<ul>
+  <li>One EKS cluster per environment, upgraded through managed add-ons (VPC CNI, CoreDNS, kube-proxy, EBS CSI, Pod Identity) and
+    Kubernetes secrets envelope-encrypted with KMS.</li>
+  <li><b>System managed node group:</b> 3 × small on-demand nodes (one per AZ), Bottlerocket OS and a <code>CriticalAddonsOnly</code> taint.
+    It runs Karpenter, CoreDNS, Argo CD and the observability agents.</li>
+  <li><b>Karpenter NodePools for workloads:</b> just-in-time nodes from a wide set of instance types, Graviton (arm64)
+    first for ~20–30% better price/performance. Spot for stateless API replicas and on-demand as a floor/fallback. Consolidation bin-packs and removes idle nodes.</li>
+</ul>
+<h3>Scaling & resource allocation</h3>
+<ul>
+  <li><b>Horizontal:</b> HPA on CPU and requests-per-second (via Prometheus Adapter or KEDA). Minimum 3 replicas in prod, spread across AZs with topology spread constraints and protected by a PodDisruptionBudget. Karpenter adds nodes when pods are pending.</li>
+  <li><b>Vertical:</b> VPA in <i>recommendation</i> mode feeds right-sizing of requests, so it doesn't fight HPA. Requests are set from observed p95 usage. Memory limit equals the memory request; there is no CPU limit, to avoid throttling.</li>
+  <li><b>Isolation:</b> one namespace per service with ResourceQuota and LimitRange, Pod Security Admission <i>restricted</i>,
+    and Kyverno policies (signed images from ECR only, non-root, read-only root FS).</li>
+</ul>
+</div>
+<div>
+<h3>Containerization strategy</h3>
+<ul>
+  <li><b>Images:</b> multi-stage Dockerfiles. The API uses a <code>python:3.12-slim</code> or distroless runtime with gunicorn, a non-root user and pinned dependencies. The SPA isn't containerized: it ships as static files to S3/CloudFront, which is cheaper and faster at the edge.</li>
+  <li><b>Build (GitHub Actions):</b> unit tests, lint and SAST (Semgrep). Then a BuildKit build with layer cache, a Trivy
+    scan that fails on critical CVEs, an SBOM (Syft) and a <b>cosign</b> signature. Actions authenticates to AWS through
+    <b>OIDC</b>, so CI holds no static keys.</li>
+  <li><b>Registry:</b> ECR in Shared Services with <b>immutable</b> tags (git SHA), scan on push and lifecycle rules. Workload accounts get cross-account pull-only access. Images are promoted between environments, never rebuilt.</li>
+  <li><b>Deployment (GitOps):</b> each service has a Helm chart. Per-environment values live in a GitOps repo, and
+    <b>Argo CD</b> in each cluster syncs it. A merge to <code>main</code> builds the image and bumps the dev tag automatically. Promotion to staging and prod happens by PR with required approval. Prod rollouts are <b>Argo Rollouts canaries</b> with automatic rollback on error-rate or latency SLO breach.</li>
+  <li><b>Infrastructure:</b> Terraform modules (AWS, EKS, Atlas providers) run through Atlantis or Actions with plan on PR and apply on merge.</li>
+  <li><b>Secrets:</b> AWS Secrets Manager, synced into pods by External Secrets Operator. EKS Pod Identity grants least-privilege IAM per service account.</li>
+</ul>
+</div>
+</div>
+
+<h2>4. Database — MongoDB Atlas on AWS</h2>
+<p><b>Why Atlas:</b> it is genuine MongoDB, run by its vendor, with full API and feature compatibility (transactions,
+change streams, Atlas Search) and the latest versions. Scaling it requires no ops work, from vertical tier changes to
+sharding. It integrates with AWS through PrivateLink, KMS customer-managed keys and Marketplace billing.
+<b>Amazon DocumentDB</b> was considered but rejected: it emulates only a subset of the MongoDB API, lags on versions and
+features, and cannot shard as transparently. Self-hosting MongoDB on EKS would put backups, upgrades and failover on a
+team that lacks the experience.</p>
+<div class="cols">
+<div>
+<ul>
+  <li><b>Topology:</b> prod starts on an <b>M10/M20 dedicated cluster</b>: a 3-node replica set across 3 AZs in the same region,
+    with auto-scaling of tier and storage. Dev uses Flex/M0; staging uses M10. Migrate to a sharded cluster when the working set or write throughput outgrows one replica set.</li>
+  <li><b>High availability:</b> automatic primary election in seconds if an AZ or node fails. Drivers use retryable writes and
+    <code>w:majority</code>. Analytics or reporting queries go to an analytics node, not the primary.</li>
+  <li><b>Security:</b> access only via PrivateLink (no public IP access list), TLS, SCRAM or AWS IAM auth per service,
+    encryption at rest with a <b>customer KMS key (BYOK)</b>, database auditing on, and client-side field-level encryption for the most sensitive PII.</li>
+</ul>
+</div>
+<div>
+<ul>
+  <li><b>Automated backups:</b> Atlas Cloud Backup with <b>continuous backup / point-in-time restore</b> (7-day window).
+    Snapshots run every 6 hours (kept 2 days), daily (7 d), weekly (4 w) and monthly (12 m). A Backup Compliance Policy stops anyone from deleting backups.</li>
+  <li><b>Disaster recovery:</b> snapshots are copied to a second region (e.g. eu-west-1). Infrastructure is fully reproducible with Terraform and Argo CD. Targets are RPO ≤ 5 min (PITR) for logical corruption and RTO ≤ 2 h for a region-wide outage (restore into a standby region and redeploy). Restore drills run quarterly.</li>
+  <li><b>Growth path:</b> when the business needs RTO in minutes, add electable nodes in a second region (multi-region cluster) and an EKS cluster there behind Route 53 failover.</li>
+</ul>
+</div>
+</div>
+
+<h2>5. Operations & cost</h2>
+<p><b>Observability:</b> OpenTelemetry (ADOT) collects metrics, traces and logs. Metrics go to Amazon Managed Prometheus and Grafana, logs to CloudWatch through Fluent Bit, and SLO-based alerts fire on API latency and errors.
+<b>Cost:</b> AWS Budgets and anomaly detection per account, Spot and Graviton workers, Karpenter consolidation, a single NAT Gateway outside prod,
+and Compute Savings Plans once the baseline is steady. Estimated starting run-rate for prod is ≈ $600–900 per month: the EKS
+control plane, 3 small system nodes, 2–3 workers, NAT, ALB, CloudFront and Atlas M10.</p>
+
+<div class="page-break hld">
+<h2>Appendix — High-Level Diagram (HLD)</h2>
+<img src="../company-inc-hld.svg" alt="Company Inc. high-level architecture diagram">
+<p class="legend">Editable source: <code>docs/company-inc-hld.drawio</code> (open in diagrams.net). Prod is shown in detail.
+Dev and Staging have the same shape with smaller sizing. Request path: Users → Route 53 → CloudFront + WAF → S3 (SPA) or
+ALB → API pods on EKS → PrivateLink → MongoDB Atlas. Delivery path: GitHub → Actions → ECR + GitOps repo → Argo CD.</p>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,121 @@
+# -- Override the chart name used in resource names.
+nameOverride: ""
+# -- Override the full resource name prefix.
+fullnameOverride: ""
+
+fleet:
+  image:
+    repository: fleetdm/fleet
+    # -- Defaults to the chart appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  # -- Port the Fleet process listens on inside the pod.
+  listenPort: 8080
+
+  service:
+    # -- NodePort makes Fleet reachable from the host (and agents) through kind's port mapping.
+    type: NodePort
+    port: 8080
+    # -- Must match the containerPort in hack/kind-config.yaml.
+    nodePort: 30443
+
+  # Fleet terminates TLS itself, so agents (osquery/orbit) talk HTTPS end to end.
+  tls:
+    enabled: true
+    # -- Use an existing kubernetes.io/tls secret instead of the generated self-signed one.
+    existingSecret: ""
+    # -- Names agents may use to reach Fleet; all are added to the generated certificate.
+    dnsNames:
+      - fleet.local
+      - localhost
+      - host.docker.internal
+    ipAddresses:
+      - 127.0.0.1
+    validityDays: 3650
+
+  # -- Run `fleet prepare db` in a Job on install and on every upgrade.
+  migrations:
+    enabled: true
+    backoffLimit: 10
+    ttlSecondsAfterFinished: 3600
+
+  logging:
+    json: true
+    debug: false
+
+  # -- Extra environment variables for the Fleet container (see https://fleetdm.com/docs/configuration/fleet-server-configuration).
+  extraEnv: []
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+  ingress:
+    # -- Optional Ingress for clusters that have an ingress controller (the local setup uses the NodePort).
+    enabled: false
+    className: nginx
+    host: fleet.local
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+      nginx.ingress.kubernetes.io/proxy-body-size: 500m
+    # -- TLS secret for the Ingress host; leave empty to serve the controller's default certificate.
+    tlsSecretName: ""
+
+mysql:
+  # -- Deploy MySQL in-cluster. Set to false and fill externalMysql to use a managed database.
+  enabled: true
+  image:
+    repository: mysql
+    tag: "8.0.43"
+    pullPolicy: IfNotPresent
+  auth:
+    database: fleet
+    username: fleet
+    # -- Leave empty to generate a random password (kept across upgrades).
+    password: ""
+    rootPassword: ""
+    # -- Existing secret with keys mysql-password and mysql-root-password.
+    existingSecret: ""
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+# -- Used only when mysql.enabled=false.
+externalMysql:
+  address: ""
+  database: fleet
+  username: fleet
+  # -- Secret holding the password under key mysql-password.
+  existingSecret: ""
+
+redis:
+  # -- Deploy Redis in-cluster. Set to false and fill externalRedis.address to use a managed Redis.
+  enabled: true
+  image:
+    repository: redis
+    tag: "7.4.5-alpine"
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+externalRedis:
+  address: ""

@@ -1,0 +1,10 @@
+# Values used by chart-testing in CI (ephemeral cluster, no host port mapping).
+fleet:
+  service:
+    type: ClusterIP
+mysql:
+  persistence:
+    enabled: false
+redis:
+  persistence:
+    enabled: false

@@ -1,0 +1,40 @@
+{{- if .Values.fleet.migrations.enabled }}
+{{- /*
+A regular Job (not a hook): with bundled MySQL a pre-install hook would run before the database
+exists, and a post-install hook would deadlock `helm --wait` because Fleet is not ready until the
+schema exists. The revision suffix gives every install/upgrade a fresh, immutable Job.
+`fleet prepare db` is idempotent, so re-running it on upgrade applies only new migrations.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-migrate-%d" (include "fleet.fullname" .) .Release.Revision | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "fleet.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: {{ .Values.fleet.migrations.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.fleet.migrations.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "fleet.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        {{- include "fleet.waitForMysql" . | nindent 8 }}
+      containers:
+        - name: prepare-db
+          image: {{ include "fleet.image" . }}
+          imagePullPolicy: {{ .Values.fleet.image.pullPolicy }}
+          command: ["fleet", "prepare", "db", "--no-prompt"]
+          env:
+            {{- include "fleet.env" . | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.fleet.resources | nindent 12 }}
+{{- end }}

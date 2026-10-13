@@ -1,0 +1,16 @@
+apiVersion: v2
+name: fleet
+description: FleetDM device-management server bundled with MySQL and Redis for local Kubernetes clusters
+type: application
+version: 0.1.0
+appVersion: "v4.93.0"
+keywords:
+  - fleetdm
+  - osquery
+  - mdm
+home: https://fleetdm.com
+sources:
+  - https://github.com/fleetdm/fleet
+maintainers:
+  - name: Oleksandr Kurylo
+    email: alexandr.kurilo71@gmail.com

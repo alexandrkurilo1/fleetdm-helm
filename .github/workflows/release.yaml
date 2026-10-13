@@ -1,0 +1,48 @@
+name: Release Chart
+
+# Publishes a new chart version whenever charts/ changes on main and Chart.yaml has an unreleased version:
+#  - GitHub Release + packaged .tgz, and index.yaml on the gh-pages branch (classic Helm repo)
+#  - OCI artifact in GitHub Container Registry
+on:
+  push:
+    branches: [main]
+    paths: ["charts/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Publish to GitHub Releases and gh-pages
+        uses: helm/chart-releaser-action@v1.7.0
+        with:
+          charts_dir: charts
+          skip_existing: true
+        env:
+          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to GHCR (OCI)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm package charts/fleet -d .cr-oci
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          for pkg in .cr-oci/*.tgz; do
+            helm push "$pkg" "oci://ghcr.io/${owner}/charts" || echo "::notice::$(basename "$pkg") already published"
+          done

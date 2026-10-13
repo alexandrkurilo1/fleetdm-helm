@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fleet.fullname" . }}
+  labels:
+    {{- include "fleet.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  replicas: {{ .Values.fleet.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "fleet.selectorLabels" (dict "ctx" . "component" "server") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "fleet.labels" . | nindent 8 }}
+        app.kubernetes.io/component: server
+    spec:
+      initContainers:
+        {{- include "fleet.waitForMysql" . | nindent 8 }}
+      containers:
+        - name: fleet
+          image: {{ include "fleet.image" . }}
+          imagePullPolicy: {{ .Values.fleet.image.pullPolicy }}
+          command: ["fleet", "serve"]
+          env:
+            {{- include "fleet.env" . | nindent 12 }}
+            - name: FLEET_SERVER_ADDRESS
+              value: "0.0.0.0:{{ .Values.fleet.listenPort }}"
+            - name: FLEET_SERVER_TLS
+              value: {{ .Values.fleet.tls.enabled | quote }}
+            {{- if .Values.fleet.tls.enabled }}
+            - name: FLEET_SERVER_CERT
+              value: /fleet/tls/tls.crt
+            - name: FLEET_SERVER_KEY
+              value: /fleet/tls/tls.key
+            {{- end }}
+            - name: FLEET_OSQUERY_STATUS_LOG_PLUGIN
+              value: stdout
+            - name: FLEET_OSQUERY_RESULT_LOG_PLUGIN
+              value: stdout
+          ports:
+            - name: https
+              containerPort: {{ .Values.fleet.listenPort }}
+          # /healthz returns 200 only when MySQL and Redis are reachable and migrations are applied.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.fleet.tls.enabled }}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.fleet.tls.enabled }}
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: {{ ternary "HTTPS" "HTTP" .Values.fleet.tls.enabled }}
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.fleet.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.fleet.tls.enabled }}
+            - name: tls
+              mountPath: /fleet/tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.fleet.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "fleet.tls.secretName" . }}
+        {{- end }}

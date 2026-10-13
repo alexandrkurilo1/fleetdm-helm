@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fleet.fullname" . }}
+  labels:
+    {{- include "fleet.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+spec:
+  type: {{ .Values.fleet.service.type }}
+  ports:
+    - name: https
+      port: {{ .Values.fleet.service.port }}
+      targetPort: https
+      {{- if and (eq .Values.fleet.service.type "NodePort") .Values.fleet.service.nodePort }}
+      nodePort: {{ .Values.fleet.service.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "fleet.selectorLabels" (dict "ctx" . "component" "server") | nindent 4 }}

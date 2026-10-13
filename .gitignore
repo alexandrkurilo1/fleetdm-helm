@@ -1,0 +1,6 @@
+fleet-ca.crt
+.cr-release-packages/
+.cr-index/
+.cr-oci/
+*.tgz
+.DS_Store

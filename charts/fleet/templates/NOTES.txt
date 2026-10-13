@@ -1,0 +1,20 @@
+FleetDM {{ .Chart.AppVersion }} has been deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+{{- if eq .Values.fleet.service.type "NodePort" }}
+
+UI / agent endpoint (kind maps NodePort {{ .Values.fleet.service.nodePort }} to the host, see hack/kind-config.yaml):
+  https://localhost:8443
+{{- else }}
+
+Port-forward the UI:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "fleet.fullname" . }} 8443:{{ .Values.fleet.service.port }}
+{{- end }}
+
+{{- if and .Values.fleet.tls.enabled (not .Values.fleet.tls.existingSecret) }}
+
+Fleet uses a self-signed certificate. Export the CA so browsers/agents can trust it:
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "fleet.tls.secretName" . }} -o jsonpath='{.data.ca\.crt}' | base64 -d > fleet-ca.crt
+{{- end }}
+
+Check health (Fleet + MySQL + Redis):
+  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
