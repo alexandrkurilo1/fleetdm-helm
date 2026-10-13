@@ -47,7 +47,7 @@ either accept the browser warning or trust the CA exported by `make ca`.
 helm repo add fleet-local https://alexandrkurilo1.github.io/fleetdm-helm
 helm install fleet fleet-local/fleet -n fleet --create-namespace --wait --wait-for-jobs
 # or, from the OCI registry
-helm install fleet oci://ghcr.io/alexandrkurilo1/charts/fleet --version 0.1.0 -n fleet --create-namespace
+helm install fleet oci://ghcr.io/alexandrkurilo1/charts/fleet --version 0.1.1 -n fleet --create-namespace
 ```
 
 ## Teardown

@@ -2,8 +2,9 @@ apiVersion: v2
 name: fleet
 description: FleetDM device-management server bundled with MySQL and Redis for local Kubernetes clusters
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "v4.93.0"
+kubeVersion: ">=1.27.0-0"
 keywords:
   - fleetdm
   - osquery
